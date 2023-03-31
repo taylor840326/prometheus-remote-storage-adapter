@@ -13,12 +13,6 @@ schemas:
       - column: mode
         type: string
         size: 255
-      - column: record_timestamp
-        type: long
-        size: 0
-      - column: value
-        type: float
-        size: 0
 
   - schema_name: scrape_series_added
     schema_columns:
@@ -28,9 +22,3 @@ schemas:
       - column: job
         type: string
         size: 255
-      - column: record_timestamp
-        type: long
-        size: 0
-      - column: value
-        type: float
-        size: 0
