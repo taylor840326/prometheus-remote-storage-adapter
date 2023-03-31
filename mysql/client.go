@@ -2,10 +2,12 @@ package mysql
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/prometheus/common/log"
 	"github.com/prometheus/common/model"
+	"github.com/syndtr/goleveldb/leveldb"
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"strconv"
@@ -44,6 +46,18 @@ func (client *Client) Write(samples model.Samples) error {
 	}
 	defer db.Close()
 
+	//wal
+	wal, err := leveldb.OpenFile("wal", nil)
+	if err != nil {
+		return err
+	}
+	defer wal.Close()
+
+	for _, sample := range samples {
+		walByte, _ := json.Marshal(sample)
+		err = wal.Put(walByte, walByte, nil)
+	}
+
 	//Parse schema properties.
 	schemas, _ := client.ParseYml()
 	err = client.Schemas(schemas)
@@ -57,7 +71,18 @@ func (client *Client) Write(samples model.Samples) error {
 		return err
 	}
 
-	for _, sample := range samples {
+	//union samples.
+	var finalSample model.Samples
+	iter := wal.NewIterator(nil, nil)
+	for iter.Next() {
+		value := iter.Value()
+		tmp := model.Sample{}
+		json.Unmarshal(value, &tmp)
+		finalSample = append(finalSample, &tmp)
+	}
+	iter.Release()
+
+	for _, sample := range finalSample {
 		metric := sample.Metric
 		value := sample.Value
 		timestamp := sample.Timestamp
@@ -119,6 +144,7 @@ func (client *Client) Write(samples model.Samples) error {
 			if err != nil {
 				log.Infoln("insert record failed %s", finalInsert)
 				trx.Rollback()
+				return nil
 			}
 		}
 
@@ -126,6 +152,12 @@ func (client *Client) Write(samples model.Samples) error {
 	err = trx.Commit()
 	if err != nil {
 		return err
+	}
+
+	//release wal
+	for _, del := range finalSample {
+		delWal, _ := json.Marshal(del)
+		wal.Delete(delWal, nil)
 	}
 	return nil
 }
